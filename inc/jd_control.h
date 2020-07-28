@@ -57,6 +57,8 @@
 #define JD_CMD_CALIBRATE 0x02
 // request human-readable description of service
 #define JD_CMD_GET_DESCRIPTION 0x03
+// request events to be delivered via a pipe
+#define JD_CMD_PIPE_EVENTS 0x04
 
 // Commands specific to control service
 // do nothing
