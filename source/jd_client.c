@@ -15,28 +15,6 @@
 void jd_client_process_packet(jd_packet_t *pkt) {}
 #else
 
-#define JD_CLIENT_EV_CONNECT 0x0001
-#define JD_CLIENT_EV_DISCONNECT 0x0002
-#define JD_CLIENT_EV_BLOCK_CONNECT 0x0003
-#define JD_CLIENT_EV_PACKET 0x0004
-#define JD_CLIENT_EV_ANY_PACKET 0x0005
-
-typedef struct jd_client jd_client_t;
-
-typedef int (*jd_client_cb_t)(jd_client_t *client, int event, jd_packet_t *pkt);
-
-struct jd_client {
-    struct jd_client *next_global;
-    struct jd_client *next_attached;
-    uint32_t service_class;
-    uint8_t service_index;
-    struct jd_device *device;
-    jd_client_cb_t handler;
-    void *userdata;
-};
-static jd_client_t *clients;
-static uint8_t reattach_pending;
-
 typedef struct jd_device {
     struct jd_device *next;
     uint32_t *services;
@@ -45,6 +23,10 @@ typedef struct jd_device {
     jd_client_t *attached_clients;
     uint8_t num_services;
 } jd_device_t;
+
+
+static jd_client_t *clients;
+static uint8_t reattach_pending;
 static jd_device_t *devices;
 
 static jd_device_t *lookup_device(uint64_t devId, bool alloc) {
@@ -126,7 +108,7 @@ static void disconnect_client(jd_client_t *c) {
     c->next_attached = NULL;
     c->device = NULL;
     c->service_index = 0;
-    c->handler(c->userdata, JD_CLIENT_EV_DISCONNECT, NULL);
+    c->handler(c, JD_CLIENT_EV_DISCONNECT, NULL);
 }
 
 jd_client_t *jd_client_new(uint32_t service_class, jd_client_cb_t handler) {
@@ -170,11 +152,17 @@ void jd_client_process_packet(jd_packet_t *pkt) {
     }
 
     for (jd_client_t *c = clients; c; c = c->next_global) {
-        c->handler(c->userdata, JD_CLIENT_EV_ANY_PACKET, pkt);
+        c->handler(c, JD_CLIENT_EV_ANY_PACKET, pkt);
     }
 
-    if (!d)
-        return;
+    if (d) {
+        for (jd_client_t *c = d->attached_clients; c; c = c->next_attached) {
+            if (c->service_index == pkt->service_number) {
+                c->handler(c, JD_CLIENT_EV_PACKET, pkt);
+                break;
+            }
+        }
+    }
 }
 
 #endif
