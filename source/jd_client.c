@@ -11,6 +11,9 @@
 
 #include <stdlib.h>
 
+#define DEVICE_LOST_DELAY_US (1500 * 1000)
+#define GC_PERIOD_US (1000 * 1000)
+
 #ifndef JD_CLIENT
 void jd_client_process_packet(jd_packet_t *pkt) {}
 #else
@@ -24,10 +27,12 @@ typedef struct jd_device {
     uint8_t num_services;
 } jd_device_t;
 
+extern uint32_t now;
 
 static jd_client_t *clients;
 static uint8_t reattach_pending;
 static jd_device_t *devices;
+static uint32_t next_gc;
 
 static jd_device_t *lookup_device(uint64_t devId, bool alloc) {
     jd_device_t *d;
@@ -122,28 +127,63 @@ jd_client_t *jd_client_new(uint32_t service_class, jd_client_cb_t handler) {
     return c;
 }
 
+static void disconnect_clients(jd_device_t *d) {
+    jd_client_t *next = d->attached_clients;
+    d->attached_clients = NULL;
+    for (jd_client_t *c = next; c; c = next) {
+        next = c->next_attached;
+        disconnect_client(c);
+    }
+    free(d->services);
+    d->services = NULL;
+}
+
+
 void jd_client_process_packet(jd_packet_t *pkt) {
     bool is_announce = pkt->service_command == JD_CTRL_CMD_SERVICES && pkt->service_number == 0;
-    jd_device_t *d = lookup_device(pkt->device_identifier, is_announce);
+    jd_device_t *pktdev = lookup_device(pkt->device_identifier, is_announce);
 
     if (is_announce) {
-        if (same_services(d, pkt)) {
+        pktdev->last_seen = now;
+        if (same_services(pktdev, pkt)) {
             // update reset counter etc.
-            d->services[0] = ((uint32_t *)pkt->data)[0];
+            pktdev->services[0] = ((uint32_t *)pkt->data)[0];
         } else {
-            jd_client_t *next = d->attached_clients;
-            d->attached_clients = NULL;
-            for (jd_client_t *c = next; c; c = next) {
-                next = c->next_attached;
-                disconnect_client(c);
+            disconnect_clients(pktdev);
+
+            pktdev->num_services = pkt->service_size / 4;
+            pktdev->services = malloc(pktdev->num_services * 4);
+            memcpy(pktdev->services, pkt->data, pktdev->num_services * 4);
+
+            reattach(pktdev);
+        }
+    }
+
+    if (in_past(next_gc)) {
+        next_gc = now + GC_PERIOD_US;
+        int num_gc = 0;
+        for (jd_device_t *d = devices; d; d = d->next) {
+            if (in_past(d->last_seen + DEVICE_LOST_DELAY_US)) {
+                disconnect_clients(d);
+                d->last_seen = 0;
+                num_gc++;
             }
+        }
 
-            free(d->services);
-            d->num_services = pkt->service_size / 4;
-            d->services = malloc(d->num_services * 4);
-            memcpy(d->services, pkt->data, d->num_services * 4);
-
-            reattach(d);
+        if (num_gc) {
+            jd_device_t *next;
+            for (jd_device_t *d = devices; d && d->next; d = d->next) {
+                while (d->next && d->next->last_seen == 0) {
+                    next = d->next->next;
+                    free(d->next);
+                    d->next = next;
+                }
+            }
+            if (devices->last_seen == 0) {
+                next = devices->next;
+                free(devices);
+                devices = next;
+            }
         }
     }
 
@@ -155,8 +195,8 @@ void jd_client_process_packet(jd_packet_t *pkt) {
         c->handler(c, JD_CLIENT_EV_ANY_PACKET, pkt);
     }
 
-    if (d) {
-        for (jd_client_t *c = d->attached_clients; c; c = c->next_attached) {
+    if (pktdev) {
+        for (jd_client_t *c = pktdev->attached_clients; c; c = c->next_attached) {
             if (c->service_index == pkt->service_number) {
                 c->handler(c, JD_CLIENT_EV_PACKET, pkt);
                 break;
