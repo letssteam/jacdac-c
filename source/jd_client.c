@@ -65,11 +65,11 @@ static bool same_services(jd_device_t *d, jd_packet_t *pkt) {
     if (!d || !d->services)
         return false;
 
-    uint8_t num = d->service_size / 4;
+    uint8_t num = pkt->service_size / 4;
     if (num != d->num_services)
         return false;
 
-    uint32_t *new_services = (uint32_t *)d->data;
+    uint32_t *new_services = (uint32_t *)pkt->data;
 
     uint8_t cnt0 = d->services[0] & JD_ADVERTISEMENT_0_COUNTER_MASK;
     uint8_t cnt1 = new_services[0] & JD_ADVERTISEMENT_0_COUNTER_MASK;
