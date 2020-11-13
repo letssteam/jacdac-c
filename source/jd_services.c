@@ -4,6 +4,7 @@
 #include "jd_services.h"
 #include "jd_control.h"
 #include "jd_util.h"
+#include "jd_client.h"
 #include "interfaces/jd_tx.h"
 #include "interfaces/jd_rx.h"
 #include "interfaces/jd_hw.h"
@@ -194,6 +195,7 @@ __attribute__((weak)) void jd_app_handle_command(jd_packet_t *pkt) {}
 
 void jd_services_handle_packet(jd_packet_t *pkt) {
     jd_app_handle_packet(pkt);
+    jd_client_process_packet(pkt);
 
     if (!(pkt->flags & JD_FRAME_FLAG_COMMAND)) {
         if (pkt->service_number == 0)
