@@ -21,17 +21,21 @@ void jd_client_process_packet(jd_packet_t *pkt) {}
 #define JD_CLIENT_EV_PACKET 0x0004
 #define JD_CLIENT_EV_ANY_PACKET 0x0005
 
-typedef int (*jd_client_cb_t)(void *userdata, int event, jd_packet_t *pkt);
+typedef struct jd_client jd_client_t;
 
-typedef struct jd_client {
-    struct jd_client *next;
+typedef int (*jd_client_cb_t)(jd_client_t *client, int event, jd_packet_t *pkt);
+
+struct jd_client {
+    struct jd_client *next_global;
     struct jd_client *next_attached;
     uint32_t service_class;
     uint8_t service_index;
+    struct jd_device *device;
     jd_client_cb_t handler;
     void *userdata;
-} jd_client_t;
+};
 static jd_client_t *clients;
+static uint8_t reattach_pending;
 
 typedef struct jd_device {
     struct jd_device *next;
@@ -83,6 +87,59 @@ static bool same_services(jd_device_t *d, jd_packet_t *pkt) {
     return true;
 }
 
+static void reattach(jd_device_t *d) {
+    for (jd_client_t *c = clients; c; c = c->next_global) {
+        if (c->device || !c->service_class)
+            continue;
+
+        int i;
+        for (i = 1; i < d->num_services; ++i)
+            if (d->services[i] == c->service_class)
+                break;
+        if (i >= d->num_services)
+            continue;
+
+        c->service_index = i;
+        c->device = d;
+
+        if (c->handler(c, JD_CLIENT_EV_BLOCK_CONNECT, NULL) == 1) {
+            c->service_index = 0;
+            c->device = NULL;
+            continue;
+        }
+
+        c->next_attached = d->attached_clients;
+        d->attached_clients = c;
+
+        c->handler(c, JD_CLIENT_EV_CONNECT, NULL);
+    }
+}
+
+static void reattach_all(void) {
+    reattach_pending = 0;
+    for (jd_device_t *d = devices; d; d = d->next) {
+        reattach(d);
+    }
+}
+
+static void disconnect_client(jd_client_t *c) {
+    c->next_attached = NULL;
+    c->device = NULL;
+    c->service_index = 0;
+    c->handler(c->userdata, JD_CLIENT_EV_DISCONNECT, NULL);
+}
+
+jd_client_t *jd_client_new(uint32_t service_class, jd_client_cb_t handler) {
+    jd_client_t *c = malloc(sizeof(*c));
+    memset(c, 0, sizeof(*c));
+    c->handler = handler;
+    c->service_class = service_class;
+    c->next_global = clients;
+    clients = c;
+    reattach_pending = 1;
+    return c;
+}
+
 void jd_client_process_packet(jd_packet_t *pkt) {
     bool is_announce = pkt->service_command == JD_CTRL_CMD_SERVICES && pkt->service_number == 0;
     jd_device_t *d = lookup_device(pkt->device_identifier, is_announce);
@@ -96,18 +153,23 @@ void jd_client_process_packet(jd_packet_t *pkt) {
             d->attached_clients = NULL;
             for (jd_client_t *c = next; c; c = next) {
                 next = c->next_attached;
-                c->next_attached = NULL;
-                c->handler(c->userdata, JD_CLIENT_EV_DISCONNECT, NULL);
+                disconnect_client(c);
             }
 
             free(d->services);
             d->num_services = pkt->service_size / 4;
             d->services = malloc(d->num_services * 4);
             memcpy(d->services, pkt->data, d->num_services * 4);
+
+            reattach(d);
         }
     }
 
-    for (jd_client_t *c = clients; c; c = c->next) {
+    if (reattach_pending) {
+        reattach_all();
+    }
+
+    for (jd_client_t *c = clients; c; c = c->next_global) {
         c->handler(c->userdata, JD_CLIENT_EV_ANY_PACKET, pkt);
     }
 
