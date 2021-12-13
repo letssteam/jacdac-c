@@ -10,6 +10,10 @@
 #include "jd_config.h"
 #include "jd_physical.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 uint64_t hw_device_id(void);
 void hw_panic(void);
 
@@ -30,6 +34,7 @@ void target_enable_irq(void);
 void target_disable_irq(void);
 void target_wait_us(uint32_t n);
 void target_reset(void);
+
 int target_in_irq(void);
 
 extern uint16_t tim_max_sleep;
@@ -81,7 +86,7 @@ void bspi_send(const void *src, uint32_t len);
 void bspi_recv(void *dst, uint32_t len);
 void bspi_init(void);
 
-//dspi.c
+// dspi.c
 void dspi_init(bool slow, int cpol, int cpha);
 void dspi_tx(const void *data, uint32_t numbytes, cb_t doneHandler);
 void dspi_xfer(const void *txdata, void *rxdata, uint32_t numbytes, cb_t doneHandler);
@@ -97,4 +102,8 @@ int one_reset(void);
 void one_write(uint8_t b);
 uint8_t one_read(void);
 
+#endif
+
+#ifdef __cplusplus
+}
 #endif
